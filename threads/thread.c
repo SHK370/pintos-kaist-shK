@@ -332,7 +332,9 @@ thread_yield (void) {
 /* Sets the current thread's priority to NEW_PRIORITY. */
 void
 thread_set_priority (int new_priority) {
-	thread_current ()->priority = new_priority;
+	thread_current ()->init_priority = new_priority;
+
+	refresh_priority (); 			// thread 우선순위 변동 있을 때, donation 꼬이지 않게 refresh 한번 진행
 	thread_test_preemption ();
 }
 
@@ -413,6 +415,30 @@ thread_compare_priority (struct list_elem *l, struct list_elem *s, void *aux UNU
 }
 
 
+
+bool
+thread_compare_donate_priority (const struct list_elem *l, const struct list_elem *s, void *aux UNUSED) {
+	return list_entry (l, struct thread, donation_elem)->priority > list_entry (s, struct thread, donation_elem)->priority;
+}
+
+
+
+
+void
+donate_priority (void) {
+	int depth;
+	struct thread *cur = thread_current ();
+
+	for (depth = 0; depth < 8; depth++) {
+		if (!cur->wait_on_lock) break;						// thread 의 wait on lock list 가 NULL이 될 때까지, 내가 필요한 lock을 다른 thread가 선점하지 않고 있는 상황이 나올 때까지 반복
+		struct thread *holder = cur->wait_on_lock->holder;	// 내가 필요한 lock을 선점하고 있는 thread를 holder로 정의
+		holder->priority = cur->priority;					// 내 priority를 내가 필요한 lock을 들고 있는 thread에게 donation
+		cur = holder;										// 현재의 thread를 holder로 변경한 후, holder 입장에서 다시 필요한 lock 선점하고 있는 thread에 priority 기부하며 연쇄적으로 기부 진행
+	}
+}
+
+
+
 void
 thread_test_preemption (void) {
 	if (!list_empty (&ready_list) &&
@@ -422,6 +448,35 @@ thread_test_preemption (void) {
 	// current thread 의 priority 가 ready list 가장 앞 thread 보다 낮으면, current thread yield 하고, ready list 맨 앞 thread running 으로
 }
 
+
+void
+remove_with_lock (struct lock *lock) {
+	struct list_elem *e;
+	struct thread *cur = thread_current ();
+
+	for (e=list_begin(&cur->donations); e!=list_end(&cur->donations); e=list_next(e)) {
+		struct thread *t = list_entry (e, struct thread, donation_elem);
+		if (t->wait_on_lock == lock) {										// 이제 release 하려는 lock에 해당하는 스레드를 donations list(나에게 priority를 나눠 준)에서 delete
+			list_remove (&t->donation_elem);
+		}
+	}
+}
+
+void
+refresh_priority (void) {
+	struct thread *cur = thread_current ();
+
+	cur->priority = cur->init_priority;				// 본 함수 호출 이전에, 나의 lock을 원하는 스레드에게 priority 위임 받고 작업이 끝났다. 이제 다시 자기 priority로 돌아가서, 다음으로 나의 lock을 원하는 스레드를 탐색하여 priority를 위임받을지 결정한다.
+
+	if (!list_empty (&cur->donations)) {			// donations list에 원소 남아 있다면, 아직 나의 lock을 원하는 thread 있는 것이니, 해당 thread priority 위임 받아야 함.
+		list_sort (&cur->donations, thread_compare_donate_priority, 0);
+
+		struct thread *front = list_entry (list_front (&cur->donations), struct thread, donation_elem);
+		if (front->priority > cur->priority) {
+			cur->priority = front->priority; 
+		}
+	}
+}
 
 
 
@@ -487,6 +542,13 @@ init_thread (struct thread *t, const char *name, int priority) {
 	t->tf.rsp = (uint64_t) t + PGSIZE - sizeof (void *);
 	t->priority = priority;
 	t->magic = THREAD_MAGIC;
+
+
+
+	// 우선순위 기부 관련 초기화 항목
+	t->init_priority = priority;
+	t->wait_on_lock = NULL;
+	list_init (&t->donations);
 }
 
 /* Chooses and returns the next thread to be scheduled.  Should

@@ -92,11 +92,13 @@ struct thread {
 	char name[16];                      /* Name (for debugging purposes). */
 	int priority;                       /* Priority. */
 
-
+	int init_priority;
 
 	int64_t wakeup;
 
-
+	struct lock *wait_on_lock;			// 얻기 위해 기다리고 있는 lock list
+	struct list donations;				// priority 나눠준 스레드 list
+	struct list_elem donation_elem;		// 위의 스레드 list 관리하기 위한 element
 
 	/* Shared between thread.c and synch.c. */
 	struct list_elem elem;              /* List element. */
@@ -156,5 +158,12 @@ void thread_awake(int64_t ticks);
 
 bool thread_compare_priority(struct list_elem *l, struct list_elem *s, void *aux UNUSED);
 void thread_test_preemption(void);
+
+bool thread_compare_donate_priority (const struct list_elem *l, const struct list_elem *s, void *aux UNUSED);
+void donate_priority (void);
+
+void remove_with_lock (struct lock *lock);
+void refresh_priority (void);
+
 
 #endif /* threads/thread.h */
