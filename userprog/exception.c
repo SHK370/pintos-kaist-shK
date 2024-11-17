@@ -35,8 +35,7 @@ exception_init (void) {
 	   invoke them via these instructions. */
 	intr_register_int (3, 3, INTR_ON, kill, "#BP Breakpoint Exception");
 	intr_register_int (4, 3, INTR_ON, kill, "#OF Overflow Exception");
-	intr_register_int (5, 3, INTR_ON, kill,
-			"#BR BOUND Range Exceeded Exception");
+	intr_register_int (5, 3, INTR_ON, kill, "#BR BOUND Range Exceeded Exception");
 
 	/* These exceptions have DPL==0, preventing user processes from
 	   invoking them via the INT instruction.  They can still be
@@ -45,14 +44,12 @@ exception_init (void) {
 	intr_register_int (0, 0, INTR_ON, kill, "#DE Divide Error");
 	intr_register_int (1, 0, INTR_ON, kill, "#DB Debug Exception");
 	intr_register_int (6, 0, INTR_ON, kill, "#UD Invalid Opcode Exception");
-	intr_register_int (7, 0, INTR_ON, kill,
-			"#NM Device Not Available Exception");
+	intr_register_int (7, 0, INTR_ON, kill, "#NM Device Not Available Exception");
 	intr_register_int (11, 0, INTR_ON, kill, "#NP Segment Not Present");
 	intr_register_int (12, 0, INTR_ON, kill, "#SS Stack Fault Exception");
 	intr_register_int (13, 0, INTR_ON, kill, "#GP General Protection Exception");
 	intr_register_int (16, 0, INTR_ON, kill, "#MF x87 FPU Floating-Point Error");
-	intr_register_int (19, 0, INTR_ON, kill,
-			"#XF SIMD Floating-Point Exception");
+	intr_register_int (19, 0, INTR_ON, kill, "#XF SIMD Floating-Point Exception");
 
 	/* Most exceptions can be handled with interrupts turned on.
 	   We need to disable interrupts for page faults because the
@@ -134,7 +131,6 @@ page_fault (struct intr_frame *f) {
 	   be assured of reading CR2 before it changed). */
 	intr_enable ();
 
-
 	/* Determine cause. */
 	not_present = (f->error_code & PF_P) == 0;
 	write = (f->error_code & PF_W) != 0;
@@ -157,4 +153,3 @@ page_fault (struct intr_frame *f) {
 			user ? "user" : "kernel");
 	kill (f);
 }
-

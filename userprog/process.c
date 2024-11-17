@@ -10,14 +10,14 @@
 #include "filesys/directory.h"
 #include "filesys/file.h"
 #include "filesys/filesys.h"
+#include "intrinsic.h"
 #include "threads/flags.h"
 #include "threads/init.h"
 #include "threads/interrupt.h"
+#include "threads/mmu.h"
 #include "threads/palloc.h"
 #include "threads/thread.h"
-#include "threads/mmu.h"
 #include "threads/vaddr.h"
-#include "intrinsic.h"
 #ifdef VM
 #include "vm/vm.h"
 #endif
@@ -50,6 +50,10 @@ process_create_initd (const char *file_name) {
 		return TID_ERROR;
 	strlcpy (fn_copy, file_name, PGSIZE);
 
+	// PJT2 Argument Passing
+    char *ptr;
+    strtok_r(file_name, " ", &ptr);
+
 	/* Create a new thread to execute FILE_NAME. */
 	tid = thread_create (file_name, PRI_DEFAULT, initd, fn_copy);
 	if (tid == TID_ERROR)
@@ -76,8 +80,8 @@ initd (void *f_name) {
 tid_t
 process_fork (const char *name, struct intr_frame *if_ UNUSED) {
 	/* Clone current thread to new thread.*/
-	return thread_create (name,
-			PRI_DEFAULT, __do_fork, thread_current ());
+
+	return thread_create (name, PRI_DEFAULT, __do_fork, thread_current ());
 }
 
 #ifndef VM
@@ -168,6 +172,8 @@ process_exec (void *f_name) {
 	/* We cannot use the intr_frame in the thread structure.
 	 * This is because when current thread rescheduled,
 	 * it stores the execution information to the member. */
+
+
 	struct intr_frame _if;
 	_if.ds = _if.es = _if.ss = SEL_UDSEG;
 	_if.cs = SEL_UCSEG;
@@ -176,19 +182,31 @@ process_exec (void *f_name) {
 	/* We first kill the current context */
 	process_cleanup ();
 
+
+	// PJT2 argument passing
+	char *ptr, *arg;
+	int argc = 0;
+	char *argv[64];
+	for (arg = strtok_r(file_name, " ", &ptr); arg != NULL; arg = strtok_r(NULL, " ", &ptr))
+		argv[argc++] = arg;
+
+
 	/* And then load the binary */
 	success = load (file_name, &_if);
 
 	/* If load failed, quit. */
-	palloc_free_page (file_name);
 	if (!success)
 		return -1;
+
+	// PJT2 argument passing
+	argument_stack(argv, argc, &_if);
+
+	palloc_free_page (file_name);
 
 	/* Start switched process. */
 	do_iret (&_if);
 	NOT_REACHED ();
 }
-
 
 /* Waits for thread TID to die and returns its exit status.  If
  * it was terminated by the kernel (i.e. killed due to an
@@ -199,11 +217,16 @@ process_exec (void *f_name) {
  *
  * This function will be implemented in problem 2-2.  For now, it
  * does nothing. */
-int
+int 
 process_wait (tid_t child_tid UNUSED) {
 	/* XXX: Hint) The pintos exit if process_wait (initd), we recommend you
 	 * XXX:       to add infinite loop here before
 	 * XXX:       implementing the process_wait. */
+    /* XXX: Hint) process_wait(initd)인 경우 pintos가 종료됩니다. process_wait를 구현하기
+       전에 여기에 무한 루프를 추가하는 것이 좋습니다. */
+	for (int i = 0; i < 100000000; i++)
+	{
+	}
 	return -1;
 }
 
@@ -312,9 +335,7 @@ struct ELF64_PHDR {
 
 static bool setup_stack (struct intr_frame *if_);
 static bool validate_segment (const struct Phdr *, struct file *);
-static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
-		uint32_t read_bytes, uint32_t zero_bytes,
-		bool writable);
+static bool load_segment (struct file *file, off_t ofs, uint8_t *upage, uint32_t read_bytes, uint32_t zero_bytes, bool writable);
 
 /* Loads an ELF executable from FILE_NAME into the current thread.
  * Stores the executable's entry point into *RIP
@@ -424,7 +445,6 @@ done:
 	file_close (file);
 	return success;
 }
-
 
 /* Checks whether PHDR describes a valid, loadable segment in
  * FILE and returns true if so, false otherwise. */
@@ -637,3 +657,45 @@ setup_stack (struct intr_frame *if_) {
 	return success;
 }
 #endif /* VM */
+
+
+// PJT2 argument passing
+void argument_stack(char **argv, int argc, struct intr_frame *_if)
+{
+	char *arg_addr[100];
+	int argv_len;
+
+	// 프로그램 이름, 인자 문자열 push
+	for (int i = argc - 1; i >= 0; i--)
+	{
+		argv_len = strlen(argv[i]) + 1;	// 인자 길이 + NULL 문자 포함
+		_if->rsp -= argv_len;			// 스택 포인터 이동
+		memcpy(_if->rsp, argv[i], argv_len);	// 데이터를 스택에 복사
+		arg_addr[i] = _if->rsp;			// 현재 스택 포인터 주소 저장
+	}
+
+	// 8바이트 정렬 패딩 추가
+	while (_if->rsp % 8)
+		*(uint8_t *)(--_if->rsp) = 0;
+	
+	// NULL 포인터 추가
+	_if->rsp -= 8;
+	memset(_if->rsp, 0, sizeof(char *));
+
+	// 각 인자 문자열의 주소 push
+	for (int i = argc - 1; i >= 0; i--) {
+		_if->rsp -= 8;
+		memcpy(_if->rsp, &arg_addr[i], sizeof(char *));
+	}
+
+	// 인자 문자열 종료 나타내는 0 push
+	_if->rsp = _if->rsp - 8;
+	memset(_if->rsp, 0, sizeof(void *));
+
+	// 레지스터 설정
+	_if->R.rdi = argc;
+	_if->R.rsi = _if->rsp + 8;
+
+	hex_dump(_if->rsp, _if->rsp, USER_STACK - _if->rsp, true);
+
+}
